@@ -1,6 +1,8 @@
 package studentservice;
 
 import javax.swing.BorderFactory;
+import javax.swing.Box;
+import javax.swing.BoxLayout;
 import javax.swing.DefaultListCellRenderer;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
@@ -11,13 +13,16 @@ import javax.swing.JList;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
+import javax.swing.JSplitPane;
 import javax.swing.JTable;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.ListSelectionModel;
+import javax.swing.SwingConstants;
 import javax.swing.border.Border;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
+import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 import java.awt.BorderLayout;
 import java.awt.Color;
@@ -28,8 +33,11 @@ import java.awt.Font;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
+import java.awt.event.ActionListener;
 import java.awt.event.KeyEvent;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * The main window of the Student Service Management System.
@@ -37,7 +45,8 @@ import java.util.List;
  * Layout:
  * <ul>
  *   <li>Left: form for entering a new service request</li>
- *   <li>Right: table of submitted requests</li>
+ *   <li>Right: search bar, table of requests, status update controls and request details</li>
+ *   <li>Bottom: status bar showing request counts and the last action</li>
  * </ul>
  * All business rules live in {@link StudentServiceSystem}; this class only
  * handles user interaction.
@@ -46,10 +55,17 @@ public class StudentServiceGUI extends JFrame {
 
     private static final long serialVersionUID = 1L;
 
+    private static final String SEARCH_BY_REQUEST_ID = "Request ID";
+    private static final String SEARCH_BY_STUDENT_ID = "Student ID";
     private static final String[] TABLE_COLUMNS =
             {"Request ID", "Student ID", "Student Name", "Service Type", "Status", "Created"};
+    private static final int COL_REQUEST_ID = 0;
+    private static final int COL_STATUS = 4;
 
     private static final Color ERROR_COLOUR = new Color(200, 40, 40);
+    private static final Color PENDING_COLOUR = new Color(255, 236, 179);
+    private static final Color IN_PROGRESS_COLOUR = new Color(187, 222, 251);
+    private static final Color RESOLVED_COLOUR = new Color(200, 230, 201);
 
     private final transient StudentServiceSystem system;
 
@@ -63,7 +79,12 @@ public class StudentServiceGUI extends JFrame {
     private final JLabel descriptionCounter = new JLabel();
     private transient Border defaultFieldBorder;
 
-    // ----- Table -----
+    // ----- Search / table / update components -----
+    private final JComboBox<String> searchByCombo =
+            new JComboBox<>(new String[]{SEARCH_BY_REQUEST_ID, SEARCH_BY_STUDENT_ID});
+    /** Status filter; the first (null) item means "all statuses". */
+    private final JComboBox<RequestStatus> statusFilterCombo = new JComboBox<>();
+    private final JTextField searchField = new JTextField(14);
     private final DefaultTableModel tableModel = new DefaultTableModel(TABLE_COLUMNS, 0) {
         @Override
         public boolean isCellEditable(int row, int column) {
@@ -71,6 +92,14 @@ public class StudentServiceGUI extends JFrame {
         }
     };
     private final JTable requestTable = new JTable(tableModel);
+    private final JComboBox<RequestStatus> statusCombo = new JComboBox<>(RequestStatus.values());
+    private final JButton updateStatusButton = new JButton("Update Status");
+    private final JLabel selectedRequestLabel = new JLabel("No request selected");
+    private final JTextArea detailsArea = new JTextArea(8, 40);
+
+    // ----- Status bar -----
+    private final JLabel summaryLabel = new JLabel();
+    private final JLabel messageLabel = new JLabel(" ");
 
     public StudentServiceGUI(StudentServiceSystem system) {
         super("Student Service Management System");
@@ -81,6 +110,7 @@ public class StudentServiceGUI extends JFrame {
         setLayout(new BorderLayout(8, 8));
         add(buildFormPanel(), BorderLayout.WEST);
         add(buildRequestsPanel(), BorderLayout.CENTER);
+        add(buildStatusBar(), BorderLayout.SOUTH);
 
         refreshTable(system.getAllRequests());
 
@@ -209,17 +239,102 @@ public class StudentServiceGUI extends JFrame {
     }
 
     private JPanel buildRequestsPanel() {
+        // --- Search bar ---
+        JButton searchButton = new JButton("Search");
+        searchButton.addActionListener(e -> handleSearch());
+        searchField.addActionListener(e -> handleSearch()); // Enter key searches
+        searchButton.setMnemonic(KeyEvent.VK_R);
+        JButton showAllButton = new JButton("Show All");
+        showAllButton.setMnemonic(KeyEvent.VK_A);
+        showAllButton.addActionListener(e -> showAllRequests());
+
+        statusFilterCombo.addItem(null);
+        for (RequestStatus status : RequestStatus.values()) {
+            statusFilterCombo.addItem(status);
+        }
+        statusFilterCombo.setRenderer(new DefaultListCellRenderer() {
+            @Override
+            public Component getListCellRendererComponent(JList<?> list, Object value, int index,
+                                                          boolean isSelected, boolean cellHasFocus) {
+                super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
+                if (value == null) {
+                    setText("All statuses");
+                }
+                return this;
+            }
+        });
+        statusFilterCombo.setToolTipText("Show only requests with this status");
+        statusFilterCombo.addActionListener(e -> handleFilter());
+
+        JPanel searchPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
+        searchPanel.add(new JLabel("Search by:"));
+        searchPanel.add(searchByCombo);
+        searchPanel.add(searchField);
+        searchPanel.add(searchButton);
+        searchPanel.add(showAllButton);
+        searchPanel.add(Box.createHorizontalStrut(16));
+        searchPanel.add(new JLabel("Filter:"));
+        searchPanel.add(statusFilterCombo);
+
+        // --- Table ---
         requestTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         requestTable.setRowHeight(24);
+        requestTable.setAutoCreateRowSorter(true);
         requestTable.getTableHeader().setReorderingAllowed(false);
+        requestTable.getColumnModel().getColumn(COL_STATUS).setCellRenderer(new StatusCellRenderer());
+        requestTable.getSelectionModel().addListSelectionListener(e -> {
+            if (!e.getValueIsAdjusting()) {
+                showSelectedRequestDetails();
+            }
+        });
+
+        // --- Status update controls ---
+        updateStatusButton.setEnabled(false);
+        updateStatusButton.setMnemonic(KeyEvent.VK_U);
+        updateStatusButton.addActionListener(e -> handleUpdateStatus());
+        JPanel updatePanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
+        updatePanel.setBorder(BorderFactory.createTitledBorder("Update Request Status"));
+        updatePanel.add(selectedRequestLabel);
+        updatePanel.add(Box.createHorizontalStrut(12));
+        updatePanel.add(new JLabel("New status:"));
+        updatePanel.add(statusCombo);
+        updatePanel.add(updateStatusButton);
+
+        // --- Details ---
+        detailsArea.setEditable(false);
+        detailsArea.setLineWrap(true);
+        detailsArea.setWrapStyleWord(true);
+        detailsArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+        detailsArea.setText("Select a request in the table to see its details.");
+        JScrollPane detailsScroll = new JScrollPane(detailsArea);
+        detailsScroll.setBorder(BorderFactory.createTitledBorder("Request Details"));
+
+        JPanel lower = new JPanel(new BorderLayout());
+        lower.add(updatePanel, BorderLayout.NORTH);
+        lower.add(detailsScroll, BorderLayout.CENTER);
 
         JScrollPane tableScroll = new JScrollPane(requestTable);
         tableScroll.setBorder(BorderFactory.createTitledBorder("Service Requests"));
+        JSplitPane split = new JSplitPane(JSplitPane.VERTICAL_SPLIT, tableScroll, lower);
+        split.setResizeWeight(0.55);
+        split.setBorder(null);
 
         JPanel panel = new JPanel(new BorderLayout());
-        panel.setBorder(BorderFactory.createEmptyBorder(8, 0, 8, 8));
-        panel.add(tableScroll, BorderLayout.CENTER);
+        panel.setBorder(BorderFactory.createEmptyBorder(8, 0, 0, 8));
+        panel.add(searchPanel, BorderLayout.NORTH);
+        panel.add(split, BorderLayout.CENTER);
         return panel;
+    }
+
+    private JPanel buildStatusBar() {
+        JPanel bar = new JPanel();
+        bar.setLayout(new BoxLayout(bar, BoxLayout.X_AXIS));
+        bar.setBorder(BorderFactory.createEmptyBorder(4, 10, 6, 10));
+        bar.add(summaryLabel);
+        bar.add(Box.createHorizontalGlue());
+        bar.add(messageLabel);
+        messageLabel.setHorizontalAlignment(SwingConstants.RIGHT);
+        return bar;
     }
 
     // ==================================================================
@@ -236,22 +351,118 @@ public class StudentServiceGUI extends JFrame {
                     contactField.getText(), selectedType, descriptionArea.getText());
 
             refreshTable(system.getAllRequests());
+            selectRequestInTable(request.getRequestId());
             clearForm();
+            showMessage("Request " + request.getRequestId() + " submitted.", false);
             JOptionPane.showMessageDialog(this,
                     "Service request submitted successfully.\n\nRequest ID: " + request.getRequestId()
                             + "\nStatus: " + request.getStatus(),
                     "Request Submitted", JOptionPane.INFORMATION_MESSAGE);
         } catch (ValidationException ex) {
             highlightInvalidFields(selectedType);
+            showMessage("Please correct the highlighted fields.", true);
             JOptionPane.showMessageDialog(this,
                     "Please fix the following:\n\n- " + String.join("\n- ", ex.getErrors()),
                     "Invalid Input", JOptionPane.WARNING_MESSAGE);
         }
     }
 
+    /** Searches by Request ID or Student ID depending on the drop-down. */
+    private void handleSearch() {
+        String query = searchField.getText().trim();
+        if (query.isEmpty()) {
+            showMessage("Enter a Request ID or Student ID to search.", true);
+            JOptionPane.showMessageDialog(this, "Please enter a value to search for.",
+                    "Search", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        resetFilterSilently();
+        List<ServiceRequest> results;
+        if (SEARCH_BY_REQUEST_ID.equals(searchByCombo.getSelectedItem())) {
+            results = system.findRequestById(query).map(List::of).orElse(List.of());
+        } else {
+            results = system.findRequestsByStudentId(query);
+        }
+
+        refreshTable(results);
+        if (results.isEmpty()) {
+            showMessage("No requests found for " + searchByCombo.getSelectedItem() + " '" + query + "'.", true);
+            JOptionPane.showMessageDialog(this,
+                    "No requests found for " + searchByCombo.getSelectedItem() + " '" + query + "'.",
+                    "No Results", JOptionPane.INFORMATION_MESSAGE);
+        } else {
+            showMessage(results.size() + " request(s) found.", false);
+            requestTable.setRowSelectionInterval(0, 0);
+        }
+    }
+
+    /** Shows only the requests with the status chosen in the filter drop-down. */
+    private void handleFilter() {
+        RequestStatus status = (RequestStatus) statusFilterCombo.getSelectedItem();
+        searchField.setText("");
+        if (status == null) {
+            refreshTable(system.getAllRequests());
+            showMessage("Showing all " + system.getRequestCount() + " request(s).", false);
+            return;
+        }
+        List<ServiceRequest> results = system.findRequestsByStatus(status);
+        refreshTable(results);
+        showMessage(results.size() + " request(s) with status " + status + ".", false);
+    }
+
+    /** Clears the search box and the status filter, then lists every request. */
+    private void showAllRequests() {
+        if (statusFilterCombo.getSelectedIndex() == 0) {
+            handleFilter(); // already "All statuses": just refresh the list
+        } else {
+            statusFilterCombo.setSelectedIndex(0); // triggers handleFilter()
+        }
+    }
+
+    /** Changes the status of the request currently selected in the table. */
+    private void handleUpdateStatus() {
+        String requestId = getSelectedRequestId();
+        if (requestId == null) {
+            JOptionPane.showMessageDialog(this, "Please select a request in the table first.",
+                    "No Request Selected", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        RequestStatus newStatus = (RequestStatus) statusCombo.getSelectedItem();
+        try {
+            boolean changed = system.updateRequestStatus(requestId, newStatus);
+            if (!changed) {
+                showMessage(requestId + " is already " + newStatus + ".", true);
+                JOptionPane.showMessageDialog(this,
+                        "Request " + requestId + " already has the status '" + newStatus + "'.",
+                        "No Change", JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+            refreshTable(currentlyDisplayedRequests());
+            selectRequestInTable(requestId);
+            showMessage(requestId + " updated to " + newStatus + ".", false);
+        } catch (ValidationException ex) {
+            showMessage(ex.getMessage(), true);
+            JOptionPane.showMessageDialog(this, ex.getMessage(), "Update Failed",
+                    JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
     // ==================================================================
     // Helpers
     // ==================================================================
+
+    /** Sets the filter back to "All statuses" without re-running the filter. */
+    private void resetFilterSilently() {
+        ActionListener[] listeners = statusFilterCombo.getActionListeners();
+        for (ActionListener listener : listeners) {
+            statusFilterCombo.removeActionListener(listener);
+        }
+        statusFilterCombo.setSelectedIndex(0);
+        for (ActionListener listener : listeners) {
+            statusFilterCombo.addActionListener(listener);
+        }
+    }
 
     private void refreshTable(List<ServiceRequest> requests) {
         tableModel.setRowCount(0);
@@ -265,6 +476,64 @@ public class StudentServiceGUI extends JFrame {
                     r.getCreatedAt().format(ServiceRequest.DATE_FORMAT)
             });
         }
+        updateSummary();
+        showSelectedRequestDetails();
+    }
+
+    /** Returns the requests currently listed in the table (keeps an active search after updates). */
+    private List<ServiceRequest> currentlyDisplayedRequests() {
+        List<ServiceRequest> shown = new ArrayList<>();
+        for (int row = 0; row < tableModel.getRowCount(); row++) {
+            system.findRequestById((String) tableModel.getValueAt(row, COL_REQUEST_ID))
+                    .ifPresent(shown::add);
+        }
+        return shown;
+    }
+
+    private String getSelectedRequestId() {
+        int viewRow = requestTable.getSelectedRow();
+        if (viewRow < 0) {
+            return null;
+        }
+        int modelRow = requestTable.convertRowIndexToModel(viewRow);
+        return (String) tableModel.getValueAt(modelRow, COL_REQUEST_ID);
+    }
+
+    private void selectRequestInTable(String requestId) {
+        for (int row = 0; row < tableModel.getRowCount(); row++) {
+            if (requestId.equals(tableModel.getValueAt(row, COL_REQUEST_ID))) {
+                int viewRow = requestTable.convertRowIndexToView(row);
+                requestTable.setRowSelectionInterval(viewRow, viewRow);
+                requestTable.scrollRectToVisible(requestTable.getCellRect(viewRow, 0, true));
+                return;
+            }
+        }
+    }
+
+    private void showSelectedRequestDetails() {
+        String requestId = getSelectedRequestId();
+        Optional<ServiceRequest> request =
+                requestId == null ? Optional.empty() : system.findRequestById(requestId);
+        if (request.isPresent()) {
+            detailsArea.setText(request.get().toDetailedString());
+            detailsArea.setCaretPosition(0);
+            selectedRequestLabel.setText("Selected: " + requestId);
+            statusCombo.setSelectedItem(request.get().getStatus());
+            updateStatusButton.setEnabled(true);
+        } else {
+            detailsArea.setText("Select a request in the table to see its details.");
+            selectedRequestLabel.setText("No request selected");
+            updateStatusButton.setEnabled(false);
+        }
+    }
+
+    private void updateSummary() {
+        var summary = system.getStatusSummary();
+        summaryLabel.setText(String.format("Total: %d   |   Pending: %d   |   In Progress: %d   |   Resolved: %d",
+                system.getRequestCount(),
+                summary.get(RequestStatus.PENDING),
+                summary.get(RequestStatus.IN_PROGRESS),
+                summary.get(RequestStatus.RESOLVED)));
     }
 
     private void updateDescriptionCounter() {
@@ -315,5 +584,34 @@ public class StudentServiceGUI extends JFrame {
         contactField.setBorder(defaultFieldBorder);
         serviceTypeCombo.setBorder(null);
         descriptionArea.setBorder(null);
+    }
+
+    private void showMessage(String message, boolean isError) {
+        messageLabel.setText(message);
+        messageLabel.setForeground(isError ? ERROR_COLOUR : new Color(30, 110, 50));
+    }
+
+    // ==================================================================
+    // Table cell renderer that colours the Status column
+    // ==================================================================
+
+    private static class StatusCellRenderer extends DefaultTableCellRenderer {
+        private static final long serialVersionUID = 1L;
+
+        @Override
+        public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected,
+                                                       boolean hasFocus, int row, int column) {
+            super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+            setHorizontalAlignment(SwingConstants.CENTER);
+            if (!isSelected && value instanceof RequestStatus status) {
+                switch (status) {
+                    case PENDING -> setBackground(PENDING_COLOUR);
+                    case IN_PROGRESS -> setBackground(IN_PROGRESS_COLOUR);
+                    case RESOLVED -> setBackground(RESOLVED_COLOUR);
+                    default -> setBackground(table.getBackground());
+                }
+            }
+            return this;
+        }
     }
 }
