@@ -1,5 +1,7 @@
 package studentservice;
 
+import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumMap;
@@ -182,10 +184,56 @@ public class StudentServiceSystem {
     }
 
     // ------------------------------------------------------------------
+    // Saving and loading
+    // ------------------------------------------------------------------
+
+    /** Saves all requests to the given file. */
+    public void saveToFile(Path file) throws IOException {
+        RequestFileHandler.save(getAllRequests(), file);
+    }
+
+    /**
+     * Replaces the current data with the requests stored in the given file.
+     *
+     * @return the number of lines that could not be read (0 = everything loaded)
+     */
+    public int loadFromFile(Path file) throws IOException {
+        RequestFileHandler.LoadResult result = RequestFileHandler.load(file);
+        students.clear();
+        requests.clear();
+        nextRequestNumber = 1;
+
+        for (ServiceRequest request : result.getRequests()) {
+            Student student = request.getStudent();
+            // Make sure every request for the same student shares one Student object.
+            Student shared = students.computeIfAbsent(student.getStudentId(), id -> student);
+            ServiceRequest stored = (shared == student) ? request : new ServiceRequest(
+                    request.getRequestId(), shared, request.getServiceType(),
+                    request.getDescription(), request.getStatus(),
+                    request.getCreatedAt(), request.getLastUpdated());
+            requests.put(stored.getRequestId(), stored);
+            nextRequestNumber = Math.max(nextRequestNumber, extractNumber(stored.getRequestId()) + 1);
+        }
+        return result.getSkippedLines();
+    }
+
+    // ------------------------------------------------------------------
     // Helpers
     // ------------------------------------------------------------------
 
     private static String normaliseId(String id) {
         return id.trim().toUpperCase();
+    }
+
+    /** Extracts 12 from "REQ-0012"; returns 0 if the ID is not in the expected format. */
+    private static int extractNumber(String requestId) {
+        if (!requestId.startsWith(REQUEST_ID_PREFIX)) {
+            return 0;
+        }
+        try {
+            return Integer.parseInt(requestId.substring(REQUEST_ID_PREFIX.length()));
+        } catch (NumberFormatException e) {
+            return 0;
+        }
     }
 }

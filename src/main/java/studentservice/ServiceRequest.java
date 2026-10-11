@@ -31,19 +31,29 @@ public class ServiceRequest {
      */
     public ServiceRequest(String requestId, Student student, ServiceType serviceType,
                           String description) {
+        this(requestId, student, serviceType, description, RequestStatus.PENDING,
+                LocalDateTime.now(), null);
+    }
+
+    /**
+     * Full constructor, used when re-loading a saved request from file.
+     */
+    public ServiceRequest(String requestId, Student student, ServiceType serviceType,
+                          String description, RequestStatus status,
+                          LocalDateTime createdAt, LocalDateTime lastUpdated) {
         if (InputValidator.isBlank(requestId)) {
             throw new IllegalArgumentException("Request ID is required.");
         }
         this.student = Objects.requireNonNull(student, "Student is required.");
         this.serviceType = Objects.requireNonNull(serviceType, "Service type is required.");
+        this.status = Objects.requireNonNull(status, "Status is required.");
+        this.createdAt = Objects.requireNonNull(createdAt, "Creation time is required.");
         if (!InputValidator.isValidDescription(description)) {
             throw new IllegalArgumentException("Invalid description.");
         }
         this.requestId = requestId.trim().toUpperCase();
         this.description = description.trim();
-        this.status = RequestStatus.PENDING;
-        this.createdAt = LocalDateTime.now();
-        this.lastUpdated = createdAt;
+        this.lastUpdated = (lastUpdated == null) ? createdAt : lastUpdated;
     }
 
     public String getRequestId() {

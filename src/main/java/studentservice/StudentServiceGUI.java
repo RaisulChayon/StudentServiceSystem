@@ -10,6 +10,9 @@ import javax.swing.JComponent;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JList;
+import javax.swing.JMenu;
+import javax.swing.JMenuBar;
+import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
@@ -18,6 +21,7 @@ import javax.swing.JTable;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.ListSelectionModel;
+import javax.swing.KeyStroke;
 import javax.swing.SwingConstants;
 import javax.swing.border.Border;
 import javax.swing.event.DocumentEvent;
@@ -34,7 +38,13 @@ import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
 import java.awt.event.ActionListener;
+import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
+import java.io.IOException;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -55,6 +65,7 @@ public class StudentServiceGUI extends JFrame {
 
     private static final long serialVersionUID = 1L;
 
+    private static final Path DATA_FILE = Paths.get("service_requests.txt");
     private static final String SEARCH_BY_REQUEST_ID = "Request ID";
     private static final String SEARCH_BY_STUDENT_ID = "Student ID";
     private static final String[] TABLE_COLUMNS =
@@ -105,13 +116,21 @@ public class StudentServiceGUI extends JFrame {
         super("Student Service Management System");
         this.system = system;
 
-        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosing(WindowEvent e) {
+                exitApplication();
+            }
+        });
 
+        setJMenuBar(buildMenuBar());
         setLayout(new BorderLayout(8, 8));
         add(buildFormPanel(), BorderLayout.WEST);
         add(buildRequestsPanel(), BorderLayout.CENTER);
         add(buildStatusBar(), BorderLayout.SOUTH);
 
+        loadData();
         refreshTable(system.getAllRequests());
 
         setMinimumSize(new Dimension(1100, 680));
@@ -121,6 +140,38 @@ public class StudentServiceGUI extends JFrame {
     // ==================================================================
     // Building the window
     // ==================================================================
+
+    private JMenuBar buildMenuBar() {
+        JMenuBar menuBar = new JMenuBar();
+
+        JMenu fileMenu = new JMenu("File");
+        JMenuItem saveItem = new JMenuItem("Save");
+        saveItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_S, InputEvent.CTRL_DOWN_MASK));
+        saveItem.addActionListener(e -> saveData(true));
+        JMenuItem reloadItem = new JMenuItem("Reload from file");
+        reloadItem.addActionListener(e -> {
+            loadData();
+            refreshTable(system.getAllRequests());
+        });
+        JMenuItem exitItem = new JMenuItem("Exit");
+        exitItem.addActionListener(e -> exitApplication());
+        fileMenu.add(saveItem);
+        fileMenu.add(reloadItem);
+        fileMenu.addSeparator();
+        fileMenu.add(exitItem);
+
+        JMenu helpMenu = new JMenu("Help");
+        JMenuItem aboutItem = new JMenuItem("About");
+        aboutItem.addActionListener(e -> JOptionPane.showMessageDialog(this,
+                "Student Service Management System\nVersion 1.0\n\n"
+                        + "Record, track, search and update student service requests.",
+                "About", JOptionPane.INFORMATION_MESSAGE));
+        helpMenu.add(aboutItem);
+
+        menuBar.add(fileMenu);
+        menuBar.add(helpMenu);
+        return menuBar;
+    }
 
     private JPanel buildFormPanel() {
         JPanel panel = new JPanel(new GridBagLayout());
@@ -350,6 +401,7 @@ public class StudentServiceGUI extends JFrame {
                     studentIdField.getText(), nameField.getText(), emailField.getText(),
                     contactField.getText(), selectedType, descriptionArea.getText());
 
+            saveData(false);
             refreshTable(system.getAllRequests());
             selectRequestInTable(request.getRequestId());
             clearForm();
@@ -438,6 +490,7 @@ public class StudentServiceGUI extends JFrame {
                         "No Change", JOptionPane.INFORMATION_MESSAGE);
                 return;
             }
+            saveData(false);
             refreshTable(currentlyDisplayedRequests());
             selectRequestInTable(requestId);
             showMessage(requestId + " updated to " + newStatus + ".", false);
@@ -589,6 +642,46 @@ public class StudentServiceGUI extends JFrame {
     private void showMessage(String message, boolean isError) {
         messageLabel.setText(message);
         messageLabel.setForeground(isError ? ERROR_COLOUR : new Color(30, 110, 50));
+    }
+
+    private void loadData() {
+        try {
+            int skipped = system.loadFromFile(DATA_FILE);
+            showMessage("Loaded " + system.getRequestCount() + " request(s) from " + DATA_FILE + ".", false);
+            if (skipped > 0) {
+                JOptionPane.showMessageDialog(this,
+                        skipped + " line(s) in " + DATA_FILE + " were damaged and could not be loaded.",
+                        "Data Warning", JOptionPane.WARNING_MESSAGE);
+            }
+        } catch (IOException e) {
+            showMessage("Could not load saved data.", true);
+            JOptionPane.showMessageDialog(this, "Could not load saved requests:\n" + e.getMessage(),
+                    "Load Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    /** Saves all requests; shows a confirmation only when the user chose File > Save. */
+    private void saveData(boolean confirm) {
+        try {
+            system.saveToFile(DATA_FILE);
+            if (confirm) {
+                showMessage("Saved " + system.getRequestCount() + " request(s).", false);
+            }
+        } catch (IOException e) {
+            showMessage("Save failed.", true);
+            JOptionPane.showMessageDialog(this, "Could not save requests:\n" + e.getMessage(),
+                    "Save Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void exitApplication() {
+        int choice = JOptionPane.showConfirmDialog(this, "Save and exit the application?",
+                "Exit", JOptionPane.YES_NO_OPTION);
+        if (choice == JOptionPane.YES_OPTION) {
+            saveData(false);
+            dispose();
+            System.exit(0);
+        }
     }
 
     // ==================================================================

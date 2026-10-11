@@ -3,7 +3,11 @@ package studentservice;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.List;
 import java.util.Map;
 
@@ -139,5 +143,46 @@ class StudentServiceSystemTest {
         assertEquals("REQ-0002",
                 system.findRequestsByStatus(RequestStatus.IN_PROGRESS).get(0).getRequestId());
         assertTrue(system.findRequestsByStatus(RequestStatus.RESOLVED).isEmpty());
+    }
+
+    // ---------- Save / load ----------
+
+    @Test
+    @DisplayName("TC35 Save/Load - data survives a save and reload, IDs continue")
+    void saveAndLoad(@TempDir Path tempDir) throws Exception {
+        Path file = tempDir.resolve("requests.txt");
+        submitValid("S1234567");
+        system.submitRequest("S7654321", "Tom Lee", "tom@uni.edu", "0498765432",
+                ServiceType.IT_SUPPORT, "Laptop cannot connect.\tTab and\nnew line test.");
+        system.updateRequestStatus("REQ-0001", RequestStatus.RESOLVED);
+        system.saveToFile(file);
+
+        StudentServiceSystem reloaded = new StudentServiceSystem();
+        assertEquals(0, reloaded.loadFromFile(file));
+        assertEquals(2, reloaded.getRequestCount());
+        assertEquals(RequestStatus.RESOLVED, reloaded.findRequestById("REQ-0001").get().getStatus());
+        assertEquals("Laptop cannot connect.\tTab and\nnew line test.",
+                reloaded.findRequestById("REQ-0002").get().getDescription());
+
+        ServiceRequest next = reloaded.submitRequest("S1234567", "Priya Sharma", "priya@uni.edu",
+                "0412345678", ServiceType.GENERAL_ENQUIRY, "Where is the student lounge?");
+        assertEquals("REQ-0003", next.getRequestId());
+    }
+
+    @Test
+    @DisplayName("TC36 Load - corrupt lines are skipped, missing file gives empty system")
+    void loadCorruptAndMissing(@TempDir Path tempDir) throws Exception {
+        Path missing = tempDir.resolve("does-not-exist.txt");
+        assertEquals(0, system.loadFromFile(missing));
+        assertEquals(0, system.getRequestCount());
+
+        Path file = tempDir.resolve("requests.txt");
+        submitValid("S1234567");
+        system.saveToFile(file);
+        Files.writeString(file, "this line is garbage\n", StandardOpenOption.APPEND);
+
+        StudentServiceSystem reloaded = new StudentServiceSystem();
+        assertEquals(1, reloaded.loadFromFile(file));
+        assertEquals(1, reloaded.getRequestCount());
     }
 }
