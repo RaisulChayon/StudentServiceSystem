@@ -1,0 +1,21 @@
+# Build output
+target/
+out/
+bin/
+*.class
+
+# IDE files
+.idea/
+*.iml
+.vscode/
+.settings/
+.project
+.classpath
+nbproject/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Runtime data file created by the application
+service_requests.txt
