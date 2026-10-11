@@ -1,0 +1,33 @@
+# Continuous Integration: compiles the project and runs every JUnit test
+# automatically on each push and pull request. A green tick next to a commit
+# on GitHub means the code built and all tests passed for that version.
+name: Build and Test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Compile and run unit tests
+        run: mvn -B test
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: target/surefire-reports/
