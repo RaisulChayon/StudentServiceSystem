@@ -1,8 +1,12 @@
 package studentservice;
 
+import java.util.Objects;
+
 /**
  * Represents a student who makes service requests.
- * First version: stores the details with basic "not empty" checks.
+ * <p>
+ * The Student ID is fixed once the object is created (it identifies the
+ * student), while contact details can be updated through validated setters.
  */
 public class Student {
 
@@ -11,9 +15,14 @@ public class Student {
     private String email;
     private String contactNumber;
 
+    /**
+     * Creates a new student after validating every field.
+     *
+     * @throws IllegalArgumentException if any field is missing or invalid
+     */
     public Student(String studentId, String name, String email, String contactNumber) {
-        if (studentId == null || studentId.trim().isEmpty()) {
-            throw new IllegalArgumentException("Student ID is required.");
+        if (!InputValidator.isValidStudentId(studentId)) {
+            throw new IllegalArgumentException("Invalid student ID: " + studentId);
         }
         this.studentId = studentId.trim().toUpperCase();
         setName(name);
@@ -38,24 +47,41 @@ public class Student {
     }
 
     public final void setName(String name) {
-        if (name == null || name.trim().isEmpty()) {
-            throw new IllegalArgumentException("Name is required.");
+        if (!InputValidator.isValidName(name)) {
+            throw new IllegalArgumentException("Invalid name: " + name);
         }
         this.name = name.trim();
     }
 
     public final void setEmail(String email) {
-        if (email == null || email.trim().isEmpty()) {
-            throw new IllegalArgumentException("Email is required.");
+        if (!InputValidator.isValidEmail(email)) {
+            throw new IllegalArgumentException("Invalid email address: " + email);
         }
-        this.email = email.trim();
+        this.email = email.trim().toLowerCase();
     }
 
     public final void setContactNumber(String contactNumber) {
-        if (contactNumber == null || contactNumber.trim().isEmpty()) {
-            throw new IllegalArgumentException("Contact number is required.");
+        if (!InputValidator.isValidContactNumber(contactNumber)) {
+            throw new IllegalArgumentException("Invalid contact number: " + contactNumber);
         }
-        this.contactNumber = contactNumber.trim();
+        this.contactNumber = InputValidator.normaliseContactNumber(contactNumber);
+    }
+
+    /** Two Student objects are the same student if their IDs match. */
+    @Override
+    public boolean equals(Object other) {
+        if (this == other) {
+            return true;
+        }
+        if (!(other instanceof Student)) {
+            return false;
+        }
+        return studentId.equals(((Student) other).studentId);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(studentId);
     }
 
     @Override

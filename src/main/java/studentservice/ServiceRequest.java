@@ -31,12 +31,12 @@ public class ServiceRequest {
      */
     public ServiceRequest(String requestId, Student student, ServiceType serviceType,
                           String description) {
-        if (requestId == null || requestId.trim().isEmpty()) {
+        if (InputValidator.isBlank(requestId)) {
             throw new IllegalArgumentException("Request ID is required.");
         }
         this.student = Objects.requireNonNull(student, "Student is required.");
         this.serviceType = Objects.requireNonNull(serviceType, "Service type is required.");
-        if (description == null || description.trim().isEmpty()) {
+        if (!InputValidator.isValidDescription(description)) {
             throw new IllegalArgumentException("Invalid description.");
         }
         this.requestId = requestId.trim().toUpperCase();
