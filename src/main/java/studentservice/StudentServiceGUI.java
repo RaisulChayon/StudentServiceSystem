@@ -38,6 +38,8 @@ import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
 import java.awt.event.ActionListener;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import java.awt.event.WindowAdapter;
@@ -46,7 +48,9 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -88,7 +92,9 @@ public class StudentServiceGUI extends JFrame {
     private final JComboBox<ServiceType> serviceTypeCombo = new JComboBox<>();
     private final JTextArea descriptionArea = new JTextArea(6, 18);
     private final JLabel descriptionCounter = new JLabel();
-    private transient Border defaultFieldBorder;
+    private final JScrollPane descriptionScroll = new JScrollPane(descriptionArea);
+    /** Each form field's normal border, so it can be restored after showing an error. */
+    private final transient Map<JComponent, Border> originalBorders = new HashMap<>();
 
     // ----- Search / table / update components -----
     private final JComboBox<String> searchByCombo =
@@ -221,7 +227,18 @@ public class StudentServiceGUI extends JFrame {
         emailField.setToolTipText("e.g. name@example.com");
         contactField.setToolTipText("8-15 digits, e.g. 0412 345 678 or +61412345678");
         descriptionArea.setToolTipText("10-500 characters");
-        defaultFieldBorder = studentIdField.getBorder();
+        for (JComponent field : new JComponent[]{studentIdField, nameField, emailField,
+                contactField, serviceTypeCombo, descriptionScroll}) {
+            originalBorders.put(field, field.getBorder());
+        }
+
+        // When staff leave the Student ID field, auto-fill details of a known student.
+        studentIdField.addFocusListener(new FocusAdapter() {
+            @Override
+            public void focusLost(FocusEvent e) {
+                autoFillStudentDetails();
+            }
+        });
 
         GridBagConstraints c = new GridBagConstraints();
         c.insets = new Insets(4, 6, 4, 6);
@@ -242,7 +259,7 @@ public class StudentServiceGUI extends JFrame {
         c.gridx = 1;
         c.weighty = 1;
         c.fill = GridBagConstraints.BOTH;
-        panel.add(new JScrollPane(descriptionArea), c);
+        panel.add(descriptionScroll, c);
         row++;
 
         c.gridy = row++;
@@ -501,6 +518,17 @@ public class StudentServiceGUI extends JFrame {
         }
     }
 
+    /** If the Student ID belongs to a known student, fill in their details. */
+    private void autoFillStudentDetails() {
+        Optional<Student> student = system.findStudentById(studentIdField.getText());
+        if (student.isPresent() && nameField.getText().isBlank()) {
+            nameField.setText(student.get().getName());
+            emailField.setText(student.get().getEmail());
+            contactField.setText(student.get().getContactNumber());
+            showMessage("Existing student found - details filled in.", false);
+        }
+    }
+
     // ==================================================================
     // Helpers
     // ==================================================================
@@ -609,34 +637,42 @@ public class StudentServiceGUI extends JFrame {
 
     /** Puts a red border around every field whose value is invalid. */
     private void highlightInvalidFields(ServiceType selectedType) {
-        Border errorBorder = BorderFactory.createLineBorder(ERROR_COLOUR, 2);
         if (!InputValidator.isValidStudentId(studentIdField.getText())) {
-            studentIdField.setBorder(errorBorder);
+            markInvalid(studentIdField);
         }
         if (!InputValidator.isValidName(nameField.getText())) {
-            nameField.setBorder(errorBorder);
+            markInvalid(nameField);
         }
         if (!InputValidator.isValidEmail(emailField.getText())) {
-            emailField.setBorder(errorBorder);
+            markInvalid(emailField);
         }
         if (!InputValidator.isValidContactNumber(contactField.getText())) {
-            contactField.setBorder(errorBorder);
+            markInvalid(contactField);
         }
         if (selectedType == null) {
-            serviceTypeCombo.setBorder(errorBorder);
+            markInvalid(serviceTypeCombo);
         }
         if (!InputValidator.isValidDescription(descriptionArea.getText())) {
-            descriptionArea.setBorder(errorBorder);
+            markInvalid(descriptionScroll);
         }
     }
 
+    /**
+     * Gives a component a red border of the same thickness as its normal
+     * border, so the layout does not shift when errors are shown.
+     */
+    private void markInvalid(JComponent component) {
+        Border original = originalBorders.get(component);
+        Insets insets = (original == null) ? new Insets(2, 2, 2, 2) : original.getBorderInsets(component);
+        component.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(ERROR_COLOUR, 2),
+                BorderFactory.createEmptyBorder(Math.max(0, insets.top - 2), Math.max(0, insets.left - 2),
+                        Math.max(0, insets.bottom - 2), Math.max(0, insets.right - 2))));
+    }
+
+    /** Puts every form field's original border back. */
     private void resetFieldHighlights() {
-        studentIdField.setBorder(defaultFieldBorder);
-        nameField.setBorder(defaultFieldBorder);
-        emailField.setBorder(defaultFieldBorder);
-        contactField.setBorder(defaultFieldBorder);
-        serviceTypeCombo.setBorder(null);
-        descriptionArea.setBorder(null);
+        originalBorders.forEach(JComponent::setBorder);
     }
 
     private void showMessage(String message, boolean isError) {
